@@ -4,6 +4,8 @@
 import cython
 import numpy as np
 cimport numpy as np
+import commit.gpucuda as gpucuda
+from ctypes import POINTER, c_double
 
 # Interfaces to actual C code performing the multiplications
 cdef extern void COMMIT_A(
@@ -167,25 +169,35 @@ cdef class LinearOperator :
         cdef double [::1] v_out = np.zeros( self.shape[0], dtype=np.float64 )
 
         # Call the cython function to read the memory pointers
-        if not self.adjoint :
-            # DIRECT PRODUCT A*x
-            with nogil :
-                COMMIT_A(
-                    self.nF, self.n, self.nE, self.nV, self.nS, self.ndirs,
-                    &v_in[0], &v_out[0],
-                    self.ICf, self.ICv, self.ICo, self.ICl, self.ECv, self.ECo, self.ISOv,
-                    self.LUT_IC, self.LUT_EC, self.LUT_ISO,
-                    self.ICthreads, self.ECthreads, self.ISOthreads
-                )
-        else :
-            # INVERSE PRODUCT A'*y
-            with nogil :
-                COMMIT_At(
-                    self.nF, self.n, self.nE, self.nV, self.nS, self.ndirs,
-                    &v_in[0], &v_out[0],
-                    self.ICf, self.ICv, self.ICo, self.ICl, self.ECv, self.ECo, self.ISOv,
-                    self.LUT_IC, self.LUT_EC, self.LUT_ISO,
-                    self.ICthreadsT, self.ECthreadsT, self.ISOthreadsT
-                )
+        if not self.adjoint : # DIRECT PRODUCT A*x
+            if self.THREADS['n'] > 0: # Use CPU version
+                with nogil :
+                    COMMIT_A(
+                        self.nF, self.n, self.nE, self.nV, self.nS, self.ndirs,
+                        &v_in[0], &v_out[0],
+                        self.ICf, self.ICv, self.ICo, self.ICl, self.ECv, self.ECo, self.ISOv,
+                        self.LUT_IC, self.LUT_EC, self.LUT_ISO,
+                        self.ICthreads, self.ECthreads, self.ISOthreads
+                    )
+            else: # Use GPU version
+                x = np.array(v_in)
+                y = np.zeros(self.shape[0], dtype=np.float64)
+                gpucuda.multiply_Ax(x.ctypes.data_as(POINTER(c_double)), y.ctypes.data_as(POINTER(c_double)))
+                v_out = y
+        else : # INVERSE PRODUCT A'*y
+            if self.THREADS['n'] > 0:
+                with nogil : # Use CPU version
+                    COMMIT_At(
+                        self.nF, self.n, self.nE, self.nV, self.nS, self.ndirs,
+                        &v_in[0], &v_out[0],
+                        self.ICf, self.ICv, self.ICo, self.ICl, self.ECv, self.ECo, self.ISOv,
+                        self.LUT_IC, self.LUT_EC, self.LUT_ISO,
+                        self.ICthreadsT, self.ECthreadsT, self.ISOthreadsT
+                    )
+            else: # Use GPU version
+                y = np.array(v_in)
+                x = np.zeros(self.shape[0], dtype=np.float64)
+                gpucuda.multiply_Aty(y.ctypes.data_as(POINTER(c_double)), x.ctypes.data_as(POINTER(c_double)))
+                v_out = x
 
         return v_out

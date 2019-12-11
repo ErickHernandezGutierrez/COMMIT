@@ -54,29 +54,29 @@ extern "C" {
         int num_gpus;
         cudaError_t cudaStatus;
         
-        printf("-> Checking availability of CUDA:\n");
+        //printf("-> Checking availability of CUDA:\n");
         cudaStatus = cudaGetDeviceCount(&num_gpus);
 
         if(cudaStatus == cudaSuccess && num_gpus > 0){
             cudaDeviceProp gpu_properties;
             cudaGetDeviceProperties(&gpu_properties, 0);
 
-            printf("\t* CUDA availability... [ OK ]\n");
+            printf("\t* checking availability of CUDA ... [ OK ]\n");
             printf("\t* number of CUDA GPUs detected: %d\n", num_gpus);
             printf("\t* using CUDA GPU: %s\n", gpu_properties.name);
 
             if(gpu_properties.major >= 5){
-                printf("\t* GPU compute capability: %d.%d [ OK ]\n", gpu_properties.major, gpu_properties.minor);
+                printf("\t* compute capability: %d.%d [ OK ]\n", gpu_properties.major, gpu_properties.minor);
             }
             else{
-                printf("\t* GPU compute capability: %d.%d [ ERROR ]. GPU compute capability must be at least 5.0\n", gpu_properties.major, gpu_properties.minor);
+                printf("\t* compute capability: %d.%d [ ERROR ]. GPU compute capability must be at least 5.0\n", gpu_properties.major, gpu_properties.minor);
                 return -1;
             }
 
             return 0;
         }
         else{
-            printf("\t* CUDA availability... [ ERROR ]: CUDA is not available or GPU is not CUDA compatible\n");
+            printf("\t* checking availability of CUDA ... [ ERROR ]: CUDA is not available or GPU is not CUDA compatible\n");
             return -1;
         }
     }
@@ -241,7 +241,7 @@ extern "C" {
         SIZE_LUTEC  = NUM_RESFUNCEC  * NUM_ORIENTATIONS * NUM_SAMPLES;
         SIZE_LUTISO = NUM_RESFUNCISO * NUM_SAMPLES;
 
-        printf("\t* Copying constant values to GPU ... ");
+        printf("\t* constant global values ... ");
         status = true;
         status = status && cudaCheck( cudaMemcpyToSymbol(num_voxels,       &NUM_VOXELS,       sizeof(int)) );
         status = status && cudaCheck( cudaMemcpyToSymbol(num_fibers,       &NUM_FIBERS,       sizeof(int)) );
@@ -259,7 +259,7 @@ extern "C" {
         if (status) printf("[ OK ]\n");
         else        printf("[ ERROR ]\n");
 
-        printf("\t* Allocating memory for vectors x and y in GPU ... ");
+        printf("\t* memory for vectors x and y ... ");
         status = true;
         status = status && cudaCheck( cudaMalloc((void**)&gpu_x, NUM_COLS * sizeof(float64_t)) );
         status = status && cudaCheck( cudaMalloc((void**)&gpu_y, NUM_ROWS * sizeof(float64_t)) );
@@ -271,7 +271,7 @@ extern "C" {
 extern "C" {
     void set_ic_lut(float32_t* lut) {
 
-        printf("\t* Allocating memory for LUT in GPU (IC part) ... ");
+        printf("\t* memory for LUT (IC part) ... ");
         status = true;
         status = status && cudaCheck( cudaMalloc((void**)&gpu_lutIC, SIZE_LUTIC * sizeof(float32_t)) );
         if (status) printf("[ OK ]\n");
@@ -361,18 +361,18 @@ extern "C" {
 
         preprocessDataForGPU(voxel, NUM_SEGMENTS, segmentsPerBlock, offsetPerBlock, NUM_VOXELS);
 
-        printf("\t* Allocating memory for operator A in GPU (IC part) ... ");
+        printf("\t* fiber segments memory allocation ... ");
         status = true;
         status = status && cudaCheck( cudaMalloc((void**)&gpu_voxelIC,  NUM_SEGMENTS * sizeof(uint32_t))  );
         status = status && cudaCheck( cudaMalloc((void**)&gpu_fiberIC,  NUM_SEGMENTS * sizeof(uint32_t))  );
         status = status && cudaCheck( cudaMalloc((void**)&gpu_orientIC, NUM_SEGMENTS * sizeof(uint16_t))  );
         status = status && cudaCheck( cudaMalloc((void**)&gpu_lengthIC, NUM_SEGMENTS * sizeof(float32_t)) );
-        status = status && cudaCheck( cudaMalloc((void**)&gpu_segmentsPerBlockIC, NUM_VOXELS * sizeof(uint32_t))  );
-        status = status && cudaCheck( cudaMalloc((void**)&gpu_offsetPerBlockIC,   NUM_VOXELS * sizeof(uint32_t))  );
+        status = status && cudaCheck( cudaMalloc((void**)&gpu_segmentsPerBlockIC, NUM_VOXELS * sizeof(uint32_t)) );
+        status = status && cudaCheck( cudaMalloc((void**)&gpu_offsetPerBlockIC,   NUM_VOXELS * sizeof(uint32_t)) );
         if (status) printf("[ OK ]\n");
         else        printf("[ ERROR ]\n");
 
-        printf("\t* Copying operator A to GPU (IC part) ... ");
+        printf("\t* transfering fiber segments ... ");
         status = true;
         status = status && cudaCheck( cudaMemcpy(gpu_voxelIC,  voxel,  NUM_SEGMENTS * sizeof(uint32_t),  cudaMemcpyHostToDevice) );
         status = status && cudaCheck( cudaMemcpy(gpu_fiberIC,  fiber,  NUM_SEGMENTS * sizeof(uint32_t),  cudaMemcpyHostToDevice) );
@@ -402,7 +402,7 @@ extern "C" {
         preprocessDataForGPU(fiber, NUM_SEGMENTS, segmentsPerBlock, offsetPerBlock, NUM_FIBERS);
 
         // alloc memory in the GPU
-        printf("\t* Allocating memory for operator A' in GPU (IC part) ... ");
+        printf("\t* extra memory for operator A' ... ");
         status = true;
         status = status && cudaCheck( cudaMalloc((void**)&gpu_voxelICt,  NUM_SEGMENTS * sizeof(uint32_t))  );
         status = status && cudaCheck( cudaMalloc((void**)&gpu_fiberICt,  NUM_SEGMENTS * sizeof(uint32_t))  );
@@ -413,7 +413,7 @@ extern "C" {
         if (status) printf("[ OK ]\n");
         else        printf("[ ERROR ]\n");
 
-        printf("\t* Copying operator A' to GPU (IC part) ... ");
+        printf("\t* transfering extra memory for operator A' ... ");
         status = true;
         status = status && cudaCheck( cudaMemcpy(gpu_voxelICt,  voxel,  NUM_SEGMENTS * sizeof(uint32_t),  cudaMemcpyHostToDevice) );
         status = status && cudaCheck( cudaMemcpy(gpu_fiberICt,  fiber,  NUM_SEGMENTS * sizeof(uint32_t),  cudaMemcpyHostToDevice) );
