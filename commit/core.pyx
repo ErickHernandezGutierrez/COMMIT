@@ -390,14 +390,6 @@ cdef class Evaluation :
         self.DICTIONARY['IC']['n']     = self.DICTIONARY['IC']['fiber'].size
         self.DICTIONARY['IC']['nF']    = self.DICTIONARY['TRK']['norm'].size
 
-        # reorder the segments based on the "v" field
-        idx = np.argsort( self.DICTIONARY['IC']['v'], kind='mergesort' )
-        self.DICTIONARY['IC']['v']     = self.DICTIONARY['IC']['v'][ idx ]
-        self.DICTIONARY['IC']['o']     = self.DICTIONARY['IC']['o'][ idx ]
-        self.DICTIONARY['IC']['fiber'] = self.DICTIONARY['IC']['fiber'][ idx ]
-        self.DICTIONARY['IC']['len']   = self.DICTIONARY['IC']['len'][ idx ]
-        del idx
-
         # divide the length of each segment by the fiber length so that all the columns of the libear operator will have same length
         # NB: it works in conjunction with the normalization of the kernels
         cdef :
@@ -421,12 +413,6 @@ cdef class Evaluation :
         self.DICTIONARY['EC']['o']  = np.fromfile( pjoin(self.get_config('TRACKING_path'),'dictionary_EC_o.dict'), dtype=np.uint16 )
         self.DICTIONARY['EC']['nE'] = self.DICTIONARY['EC']['v'].size
 
-        # reorder the segments based on the "v" field
-        idx = np.argsort( self.DICTIONARY['EC']['v'], kind='mergesort' )
-        self.DICTIONARY['EC']['v'] = self.DICTIONARY['EC']['v'][ idx ]
-        self.DICTIONARY['EC']['o'] = self.DICTIONARY['EC']['o'][ idx ]
-        del idx
-
         print( ' [ %d segments ]' % self.DICTIONARY['EC']['nE'] )
 
         # isotropic compartments
@@ -444,11 +430,6 @@ cdef class Evaluation :
         vz = vz.astype(np.int32)
         self.DICTIONARY['ISO']['v'] = vx + self.get_config('dim')[0] * ( vy + self.get_config('dim')[1] * vz )
         del vx, vy, vz
-
-        # reorder the segments based on the "v" field
-        idx = np.argsort( self.DICTIONARY['ISO']['v'], kind='mergesort' )
-        self.DICTIONARY['ISO']['v'] = self.DICTIONARY['ISO']['v'][ idx ]
-        del idx
 
         print( ' [ %d voxels ]' % self.DICTIONARY['nV'] )
 
@@ -473,31 +454,37 @@ cdef class Evaluation :
         print( '   [ %.1f seconds ]' % ( time.time() - tic ) )
 
 
-    def set_threads( self, n = None ) :
+    def set_threads( self, nthreads = None ) :
         """Set the number of threads to use for the matrix-vector operations with A and A'.
 
         Parameters
         ----------
-        n : integer
+        nthreads : integer
             Number of threads to use (default : number of CPUs in the system)
         """
-        if n is None :
+        if nthreads is None :
             # Set to the number of CPUs in the system
             try :
                 import multiprocessing
-                n = multiprocessing.cpu_count()
+                nthreads = multiprocessing.cpu_count()
             except :
-                n = 1
+                nthreads = 1
 
-        if n < 1 or n > 255 :
+        if nthreads < 1 or nthreads > 255 :
             raise RuntimeError( 'Number of threads must be between 1 and 255' )
         if self.DICTIONARY is None :
             raise RuntimeError( 'Dictionary not loaded; call "load_dictionary()" first.' )
         if self.KERNELS is None :
             raise RuntimeError( 'Response functions not generated; call "generate_kernels()" and "load_kernels()" first.' )
 
-        self.THREADS = {}
-        self.THREADS['n'] = n
+        self.THREADS         = {}
+        self.THREADS['n']    = nthreads
+        self.THREADS['IC']   = None
+        self.THREADS['EC']   = None
+        self.THREADS['ISO']  = None
+        self.THREADS['ICt']  = None
+        self.THREADS['ECt']  = None
+        self.THREADS['ISOt'] = None
 
         cdef :
             long [:] C
@@ -505,17 +492,47 @@ cdef class Evaluation :
             int i
 
         tic = time.time()
+        print( '\n-> Sorting the dictionary:' )
+
+        # reorder the segments based on the "v" field
+        print( '\t* IC  part ... ', end='' )
+        idx = np.argsort( self.DICTIONARY['IC']['v'], kind='mergesort' )
+        self.DICTIONARY['IC']['v']     = self.DICTIONARY['IC']['v'][ idx ]
+        self.DICTIONARY['IC']['o']     = self.DICTIONARY['IC']['o'][ idx ]
+        self.DICTIONARY['IC']['fiber'] = self.DICTIONARY['IC']['fiber'][ idx ]
+        self.DICTIONARY['IC']['len']   = self.DICTIONARY['IC']['len'][ idx ]
+        del idx 
+        print( '[ OK ]' ) # """
+
+        # reorder the segments based on the "v" field
+        print( '\t* EC  part ... ', end='' )
+        idx = np.argsort( self.DICTIONARY['EC']['v'], kind='mergesort' )
+        self.DICTIONARY['EC']['v'] = self.DICTIONARY['EC']['v'][ idx ]
+        self.DICTIONARY['EC']['o'] = self.DICTIONARY['EC']['o'][ idx ]
+        del idx
+        print( '[ OK ]' ) # """
+
+        print( '\t* ISO part ... ', end='' )
+        # reorder the segments based on the "v" field
+        idx = np.argsort( self.DICTIONARY['ISO']['v'], kind='mergesort' )
+        self.DICTIONARY['ISO']['v'] = self.DICTIONARY['ISO']['v'][ idx ]
+        del idx
+        print( '[ OK ]' ) # """
+
+        print( '   [ %.1f seconds ]' % ( time.time() - tic ) )
+
+        tic = time.time()
         print( '\n-> Distributing workload to different threads:' )
-        print( '\t* number of threads : %d' % n )
+        print( '\t* number of threads : %d' % nthreads )
 
         # Distribute load for the computation of A*x product
-        print( '\t* A operator...', end="" )
+        print( '\t* A  operator...', end="" )
         sys.stdout.flush()
 
         if self.DICTIONARY['IC']['n'] > 0 :
-            self.THREADS['IC'] = np.zeros( n+1, dtype=np.uint32 )
-            if n > 1 :
-                N = np.floor( self.DICTIONARY['IC']['n']/n )
+            self.THREADS['IC'] = np.zeros( nthreads+1, dtype=np.uint32 )
+            if nthreads > 1 :
+                N = np.floor( self.DICTIONARY['IC']['n']/nthreads )
                 t = 1
                 tot = 0
                 C = np.bincount( self.DICTIONARY['IC']['v'] )
@@ -525,40 +542,34 @@ cdef class Evaluation :
                         self.THREADS['IC'][t] = self.THREADS['IC'][t-1] + tot
                         t += 1
                         tot = 0
-            self.THREADS['IC'][n] = self.DICTIONARY['IC']['n']
+            self.THREADS['IC'][nthreads] = self.DICTIONARY['IC']['n']
 
             # check if some threads are not assigned any segment
             if np.count_nonzero( np.diff( self.THREADS['IC'].astype(np.int32) ) <= 0 ) :
                 self.THREADS = None
                 raise RuntimeError( 'Too many threads for the IC compartments to evaluate; try decreasing the number.' )
-        else :
-            self.THREADS['IC'] = None
 
         if self.DICTIONARY['EC']['nE'] > 0 :
-            self.THREADS['EC'] = np.zeros( n+1, dtype=np.uint32 )
-            for i in xrange(n) :
+            self.THREADS['EC'] = np.zeros( nthreads+1, dtype=np.uint32 )
+            for i in xrange(nthreads) :
                 self.THREADS['EC'][i] = np.searchsorted( self.DICTIONARY['EC']['v'], self.DICTIONARY['IC']['v'][ self.THREADS['IC'][i] ] )
-            self.THREADS['EC'][n] = self.DICTIONARY['EC']['nE']
+            self.THREADS['EC'][nthreads] = self.DICTIONARY['EC']['nE']
 
             # check if some threads are not assigned any segment
             if np.count_nonzero( np.diff( self.THREADS['EC'].astype(np.int32) ) <= 0 ) :
                 self.THREADS = None
                 raise RuntimeError( 'Too many threads for the EC compartments to evaluate; try decreasing the number.' )
-        else :
-            self.THREADS['EC'] = None
 
         if self.DICTIONARY['nV'] > 0 :
-            self.THREADS['ISO'] = np.zeros( n+1, dtype=np.uint32 )
-            for i in xrange(n) :
+            self.THREADS['ISO'] = np.zeros( nthreads+1, dtype=np.uint32 )
+            for i in xrange(nthreads) :
                 self.THREADS['ISO'][i] = np.searchsorted( self.DICTIONARY['ISO']['v'], self.DICTIONARY['IC']['v'][ self.THREADS['IC'][i] ] )
-            self.THREADS['ISO'][n] = self.DICTIONARY['nV']
+            self.THREADS['ISO'][nthreads] = self.DICTIONARY['nV']
 
             # check if some threads are not assigned any segment
             if np.count_nonzero( np.diff( self.THREADS['ISO'].astype(np.int32) ) <= 0 ) :
                 self.THREADS = None
                 raise RuntimeError( 'Too many threads for the ISO compartments to evaluate; try decreasing the number.' )
-        else :
-            self.THREADS['ISO'] = None
 
         print( ' [ OK ]' )
 
@@ -567,54 +578,47 @@ cdef class Evaluation :
         sys.stdout.flush()
 
         if self.DICTIONARY['IC']['n'] > 0 :
-            self.THREADS['ICt'] = np.full( self.DICTIONARY['IC']['n'], n-1, dtype=np.uint8 )
-            if n > 1 :
+            self.THREADS['ICt'] = np.full( self.DICTIONARY['IC']['n'], nthreads-1, dtype=np.uint8 )
+            if nthreads > 1 :
                 idx = np.argsort( self.DICTIONARY['IC']['fiber'], kind='mergesort' )
                 C = np.bincount( self.DICTIONARY['IC']['fiber'] )
                 t = tot = i1 = i2 = 0
-                N = np.floor(self.DICTIONARY['IC']['n']/n)
+                N = np.floor(self.DICTIONARY['IC']['n']/nthreads)
                 for c in C :
                     i2 += c
                     tot += c
                     if tot >= N :
                         self.THREADS['ICt'][ i1:i2 ] = t
                         t += 1
-                        if t==n-1 :
+                        if t==nthreads-1 :
                             break
                         i1 = i2
                         tot = c
                 self.THREADS['ICt'][idx] = self.THREADS['ICt'].copy()
 
-        else :
-            self.THREADS['ICt'] = None
-
         if self.DICTIONARY['EC']['nE'] > 0 :
-            self.THREADS['ECt'] = np.zeros( n+1, dtype=np.uint32 )
-            N = np.floor( self.DICTIONARY['EC']['nE']/n )
-            for i in xrange(1,n) :
+            self.THREADS['ECt'] = np.zeros( nthreads+1, dtype=np.uint32 )
+            N = np.floor( self.DICTIONARY['EC']['nE']/nthreads )
+            for i in xrange(1,nthreads) :
                 self.THREADS['ECt'][i] = self.THREADS['ECt'][i-1] + N
-            self.THREADS['ECt'][n] = self.DICTIONARY['EC']['nE']
+            self.THREADS['ECt'][nthreads] = self.DICTIONARY['EC']['nE']
 
             # check if some threads are not assigned any segment
             if np.count_nonzero( np.diff( self.THREADS['ECt'].astype(np.int32) ) <= 0 ) :
                 self.THREADS = None
                 raise RuntimeError( 'Too many threads for the EC compartments to evaluate; try decreasing the number.' )
-        else :
-            self.THREADS['ECt'] = None
 
         if self.DICTIONARY['nV'] > 0 :
-            self.THREADS['ISOt'] = np.zeros( n+1, dtype=np.uint32 )
-            N = np.floor( self.DICTIONARY['nV']/n )
-            for i in xrange(1,n) :
+            self.THREADS['ISOt'] = np.zeros( nthreads+1, dtype=np.uint32 )
+            N = np.floor( self.DICTIONARY['nV']/nthreads )
+            for i in xrange(1,nthreads) :
                 self.THREADS['ISOt'][i] = self.THREADS['ISOt'][i-1] + N
-            self.THREADS['ISOt'][n] = self.DICTIONARY['nV']
+            self.THREADS['ISOt'][nthreads] = self.DICTIONARY['nV']
 
             # check if some threads are not assigned any segment
             if np.count_nonzero( np.diff( self.THREADS['ISOt'].astype(np.int32) ) <= 0 ) :
                 self.THREADS = None
                 raise RuntimeError( 'Too many threads for the ISO compartments to evaluate; try decreasing the number.' )
-        else :
-            self.THREADS['ISOt'] = None
 
         print( '[ OK ]' )
 
