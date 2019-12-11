@@ -36,7 +36,7 @@ def init():
     global multiply_Aty
 
     # setup C callable functions
-    dll = CDLL('/home/erick/Documents/COMMIT/commit/operator/operator_withCUDA.so', mode=RTLD_GLOBAL)
+    dll = CDLL('operator_withCUDA.so', mode=RTLD_GLOBAL)
     set_globals = dll.set_globals
     set_globals.argtypes = [c_uint, c_uint, c_uint, c_uint, c_uint, c_uint, c_uint, c_uint, c_uint]
 
